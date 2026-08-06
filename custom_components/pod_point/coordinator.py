@@ -14,6 +14,7 @@ from podpointclient.charge import Charge
 from podpointclient.client import PodPointClient
 from podpointclient.errors import ApiConnectionError, AuthError, SessionError
 from podpointclient.pod import Firmware, Pod
+from podpointclient.schedule import ScheduleStatus
 from podpointclient.user import User
 import pytz
 
@@ -156,6 +157,8 @@ Updated Charges: %s\nCombined Charges: %s",
 
             self.pods = list(new_pods_by_id.values())
 
+            self.__default_missing_schedule_statuses(self.pods)
+
             if self.online is False:
                 _LOGGER.info("Connection to Pod Point re-established.")
             self.online = True
@@ -186,6 +189,36 @@ If this issue persists, please contact the developer."
             )
             _LOGGER.exception(exception)
             raise UpdateFailed() from exception
+
+    def __default_missing_schedule_statuses(self, pods: List[Pod]) -> None:
+        """Give schedules that arrived without a status the library default.
+
+        Pod Point can return charge schedules with no `status`, in which case
+        podpointclient leaves `Schedule.status` as None. `Schedule.dict` and
+        `Schedule.is_active` both dereference it unconditionally, so a single such
+        schedule raises AttributeError and takes down every platform at setup.
+
+        Defaulting here means the fix applies wherever the data is read: `entity.py`
+        touches it both in `__update_attrs` (via `pod.dict`) and in the
+        `charging_allowed` property. `charging_allowed` already handles `is_active`
+        being None, but not `status` itself being None.
+
+        `ScheduleStatus()` defaults `is_active` to False, which is also the safer
+        reading - an unknown schedule state should not be treated as an active
+        restriction on charging.
+        """
+        defaulted = 0
+        for pod in pods:
+            for schedule in getattr(pod, "charge_schedules", None) or []:
+                if getattr(schedule, "status", None) is None:
+                    schedule.status = ScheduleStatus()
+                    defaulted += 1
+
+        if defaulted:
+            _LOGGER.debug(
+                "Defaulted %s charge schedule(s) that arrived without a status",
+                defaulted,
+            )
 
     def __group_pods_by_unit_id(self, pods: List[Pod] = None) -> Dict[int, Pod]:
         """Given a list of pods, will return a dictionary { pod.unit_id: pod, *** }.

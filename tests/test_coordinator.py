@@ -172,3 +172,35 @@ async def test_coordinator_refresh_unexpected_exception(hass, error_on_get_data)
 
 
 # TODO: Add a test for repair flow creation and cleanup
+
+
+# Pod Point can return a charge schedule with no status, in which case
+# podpointclient leaves Schedule.status as None. Schedule.dict and
+# Schedule.is_active both dereference it unconditionally, so one such schedule
+# raised AttributeError and took down every platform at setup.
+@pytest.mark.asyncio
+async def test_coordinator_refresh_defaults_missing_schedule_status(
+    hass, bypass_get_data
+):
+    """A schedule with no status is given the library default rather than crashing."""
+    coordinator: PodPointDataUpdateCoordinator = await subject(hass)
+
+    await coordinator.async_refresh()
+
+    pod: Pod = coordinator.data[0]
+    assert len(pod.charge_schedules) > 0
+
+    # Simulate the API response that caused the crash
+    pod.charge_schedules[0].status = None
+
+    coordinator._PodPointDataUpdateCoordinator__default_missing_schedule_statuses(
+        coordinator.data
+    )
+
+    schedule = pod.charge_schedules[0]
+    assert schedule.status is not None
+    assert schedule.is_active is False
+
+    # The two call sites that used to raise
+    assert schedule.dict["status"]["is_active"] is False
+    assert pod.dict is not None
