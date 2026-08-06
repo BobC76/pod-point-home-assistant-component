@@ -157,7 +157,7 @@ Updated Charges: %s\nCombined Charges: %s",
 
             self.pods = list(new_pods_by_id.values())
 
-            self.__default_missing_schedule_statuses(self.pods)
+            self.__default_missing_schedule_statuses(self.__pods_with_schedules())
 
             if self.online is False:
                 _LOGGER.info("Connection to Pod Point re-established.")
@@ -189,6 +189,23 @@ If this issue persists, please contact the developer."
             )
             _LOGGER.exception(exception)
             raise UpdateFailed() from exception
+
+    def __pods_with_schedules(self) -> List[Pod]:
+        """Every Pod reachable from coordinator state that carries schedules.
+
+        `self.pods` is not the whole story: the user has its own nested Pod at
+        `user.unit.pod`, with its own charge_schedules. sensor.py reaches it via
+        `attrs.update(user.dict)`, so leaving it out gives a second, less obvious
+        route to the same crash - one that fires on every coordinator refresh
+        rather than at setup.
+        """
+        pods = list(self.pods or [])
+
+        user_pod = getattr(getattr(self.user, "unit", None), "pod", None)
+        if user_pod is not None:
+            pods.append(user_pod)
+
+        return pods
 
     def __default_missing_schedule_statuses(self, pods: List[Pod]) -> None:
         """Give schedules that arrived without a status the library default.

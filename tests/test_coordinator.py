@@ -194,7 +194,7 @@ async def test_coordinator_refresh_defaults_missing_schedule_status(
     pod.charge_schedules[0].status = None
 
     coordinator._PodPointDataUpdateCoordinator__default_missing_schedule_statuses(
-        coordinator.data
+        coordinator._PodPointDataUpdateCoordinator__pods_with_schedules()
     )
 
     schedule = pod.charge_schedules[0]
@@ -204,3 +204,31 @@ async def test_coordinator_refresh_defaults_missing_schedule_status(
     # The two call sites that used to raise
     assert schedule.dict["status"]["is_active"] is False
     assert pod.dict is not None
+
+
+# The user carries its own nested Pod at user.unit.pod, with its own schedules, which
+# sensor.py reads via `attrs.update(user.dict)`. That is a second route to the same
+# crash, and it fires on every coordinator refresh rather than at setup:
+#   File "custom_components/pod_point/sensor.py", line 663, in __update_attrs
+#     attrs.update(user.dict)
+@pytest.mark.asyncio
+async def test_coordinator_refresh_defaults_user_pod_schedule_status(
+    hass, bypass_get_data
+):
+    """A null status on the user's own nested pod is defaulted too."""
+    coordinator: PodPointDataUpdateCoordinator = await subject(hass)
+
+    await coordinator.async_refresh()
+
+    user_pod = getattr(getattr(coordinator.user, "unit", None), "pod", None)
+    if user_pod is None or not user_pod.charge_schedules:
+        pytest.skip("user fixture has no nested pod schedules")
+
+    user_pod.charge_schedules[0].status = None
+
+    coordinator._PodPointDataUpdateCoordinator__default_missing_schedule_statuses(
+        coordinator._PodPointDataUpdateCoordinator__pods_with_schedules()
+    )
+
+    assert user_pod.charge_schedules[0].status is not None
+    assert coordinator.user.dict is not None
